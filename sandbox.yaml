@@ -1,0 +1,16 @@
+# Sandbox app metadata. Required for CI validation and Sandbox Apps registry sync.
+# See https://www.notion.so/.../Sandbox-Guide for the full schema.
+
+name: "Hello sandbox"             # display name
+owner: "urara"                     # creator's short id (matches subdomain prefix). [a-z0-9]+, no hyphens.
+app: "hello"                       # short app slug. [a-z0-9-]+, max 49 chars.
+runtime: "static"                  # static | python | node
+
+data: {}                           # this template doesn't use Notion or Firestore.
+                                   # see sandbox-template-python / -node for examples.
+
+# --- Lifetime: pick one ---
+expires_at: 2026-11-08             # temporary (default). Max +180 days from creation.
+# lifetime: permanent              # uncomment + delete expires_at for long-term apps (requires owner review).
+
+purpose: "Starter for a static HTML/SPA sandbox app."

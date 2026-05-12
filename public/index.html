@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Hello sandbox</title>
+<style>
+  body { font-family: system-ui; max-width: 720px; margin: 4rem auto; padding: 0 1rem; }
+  .who { color: #555; font-size: 0.9em; }
+</style>
+<h1>Hello, sandbox 👋</h1>
+<p>このページが見えていれば、サンドボックスは動いています。</p>
+<p class="who" id="who"></p>
+<script>
+  // The sandbox-router injects X-Auth-Request-Email for SSR apps; for purely static pages,
+  // we just show a placeholder. Dynamic apps can read the header on the server side.
+  document.getElementById('who').textContent = 'signed in via @plaize.co / @rushgaming.co SSO';
+</script>

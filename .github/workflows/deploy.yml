@@ -1,0 +1,92 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GCP_PROJECT: plaize-sandbox-prod
+  GCP_REGION: asia-northeast1
+  AR_REPO: sandbox-apps
+  WIF_PROVIDER: projects/760435810995/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  DEPLOYER_SA: github-sandbox-deployer@plaize-sandbox-prod.iam.gserviceaccount.com
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==6.0.2
+      - run: python build/validate-sandbox.py sandbox.yaml
+
+  deploy:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==6.0.2
+
+      - name: read sandbox.yaml
+        id: meta
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import yaml
+          d = yaml.safe_load(open("sandbox.yaml"))
+          print(f"owner={d['owner']}")
+          print(f"app={d['app']}")
+          print(f"service=app--{d['owner']}--{d['app']}")
+          PY
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: build and push image
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ steps.meta.outputs.service }}:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: deploy to Cloud Run
+        run: |
+          gcloud run deploy "${{ steps.meta.outputs.service }}" \
+            --image "$IMAGE" \
+            --project "${{ env.GCP_PROJECT }}" \
+            --region "${{ env.GCP_REGION }}" \
+            --platform managed \
+            --ingress internal \
+            --no-allow-unauthenticated \
+            --port 8080 \
+            --cpu 1 --memory 256Mi \
+            --min-instances 0 --max-instances 3 \
+            --service-account "app-${{ steps.meta.outputs.owner }}-${{ steps.meta.outputs.app }}@${{ env.GCP_PROJECT }}.iam.gserviceaccount.com" \
+            --labels "owner=${{ steps.meta.outputs.owner }},app=${{ steps.meta.outputs.app }},managed-by=sandbox-platform"
+
+      - name: allow sandbox-router to invoke
+        run: |
+          gcloud run services add-iam-policy-binding "${{ steps.meta.outputs.service }}" \
+            --project "${{ env.GCP_PROJECT }}" \
+            --region "${{ env.GCP_REGION }}" \
+            --member "serviceAccount:sandbox-router@${{ env.GCP_PROJECT }}.iam.gserviceaccount.com" \
+            --role "roles/run.invoker"
