@@ -61,6 +61,21 @@ jobs:
       - name: configure docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
+      - name: ensure per-app SA exists
+        run: |
+          SA_NAME="app-${{ steps.meta.outputs.owner }}-${{ steps.meta.outputs.app }}"
+          SA_EMAIL="${SA_NAME}@${{ env.GCP_PROJECT }}.iam.gserviceaccount.com"
+          if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="${{ env.GCP_PROJECT }}" >/dev/null 2>&1; then
+            echo "Creating SA $SA_NAME..."
+            gcloud iam service-accounts create "$SA_NAME" \
+              --display-name="sandbox app: ${{ steps.meta.outputs.owner }}/${{ steps.meta.outputs.app }}" \
+              --project="${{ env.GCP_PROJECT }}"
+            # IAM is eventually-consistent; wait briefly so the deploy step finds it.
+            sleep 8
+          else
+            echo "SA $SA_NAME already exists."
+          fi
+
       - name: build and push image
         run: |
           IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ steps.meta.outputs.service }}:${{ github.sha }}"
@@ -70,23 +85,22 @@ jobs:
 
       - name: deploy to Cloud Run
         run: |
+          # ingress=all is needed because the sandbox-router (a sibling Cloud Run service)
+          # reaches per-app services over the public *.run.app URL. Security is enforced by:
+          #   1. --no-allow-unauthenticated → all requests require an identity token
+          #   2. Only the sandbox-router SA has project-level roles/run.invoker
+          #   3. The router's identity-token sidecar adds the Bearer token, browsers don't have it
+          # No "allow sandbox-router to invoke" step is needed: the project-level binding
+          # granted to sandbox-router@... covers every Cloud Run service in this project.
           gcloud run deploy "${{ steps.meta.outputs.service }}" \
             --image "$IMAGE" \
             --project "${{ env.GCP_PROJECT }}" \
             --region "${{ env.GCP_REGION }}" \
             --platform managed \
-            --ingress internal \
+            --ingress all \
             --no-allow-unauthenticated \
             --port 8080 \
             --cpu 1 --memory 256Mi \
             --min-instances 0 --max-instances 3 \
             --service-account "app-${{ steps.meta.outputs.owner }}-${{ steps.meta.outputs.app }}@${{ env.GCP_PROJECT }}.iam.gserviceaccount.com" \
             --labels "owner=${{ steps.meta.outputs.owner }},app=${{ steps.meta.outputs.app }},managed-by=sandbox-platform"
-
-      - name: allow sandbox-router to invoke
-        run: |
-          gcloud run services add-iam-policy-binding "${{ steps.meta.outputs.service }}" \
-            --project "${{ env.GCP_PROJECT }}" \
-            --region "${{ env.GCP_REGION }}" \
-            --member "serviceAccount:sandbox-router@${{ env.GCP_PROJECT }}.iam.gserviceaccount.com" \
-            --role "roles/run.invoker"
