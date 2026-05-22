@@ -61,20 +61,8 @@ jobs:
       - name: configure docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
-      - name: ensure per-app SA exists
-        run: |
-          SA_NAME="app-${{ steps.meta.outputs.owner }}-${{ steps.meta.outputs.app }}"
-          SA_EMAIL="${SA_NAME}@${{ env.GCP_PROJECT }}.iam.gserviceaccount.com"
-          if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="${{ env.GCP_PROJECT }}" >/dev/null 2>&1; then
-            echo "Creating SA $SA_NAME..."
-            gcloud iam service-accounts create "$SA_NAME" \
-              --display-name="sandbox app: ${{ steps.meta.outputs.owner }}/${{ steps.meta.outputs.app }}" \
-              --project="${{ env.GCP_PROJECT }}"
-            # IAM is eventually-consistent; wait briefly so the deploy step finds it.
-            sleep 8
-          else
-            echo "SA $SA_NAME already exists."
-          fi
+      # Per-app SA creation happens MCP-side in `sandbox_new`,
+      # not in this workflow — keeps the deployer SA at minimal privilege.
 
       - name: build and push image
         run: |
